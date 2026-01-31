@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+</head>
+<body>
+<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/ruby-3_2-wasm-wasi@2.3.0/dist/browser.umd.js"></script>
+<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/p5@1.11.2/lib/p5.min.js"></script>
+<script type="text/javascript" src="https://rbcanvas.net/p5/0.7.2/runtime/rbcanvasp5.js" data-wasm="https://cdn.jsdelivr.net/npm/ruby-3_2-wasm-wasi@2.3.0/dist/ruby+stdlib.wasm"></script>
+<script type="text/ruby" section="s00" name="main">
+  $PROGRAM_NAME = "main"
+
+  # Ruby + p5
+  # day30 "It's not a bug, it's a feature."
+  # プロセス実行中にだけ見た目が壊れたようになるが、実際のコマンド出力は正常
+
+  def setup
+    createCanvas(800, 400)
+
+    @padding_px = 22
+    @font_size_px = 16
+    begin
+      text_font("monospace")
+    rescue
+    end
+    text_size(@font_size_px)
+    text_align(LEFT, TOP)
+
+    # 文字
+    @columns_count = ((width - @padding_px * 2) / (@font_size_px * 0.62)).floor
+    @rows_count    = ((height - @padding_px * 2) / (@font_size_px * 1.15)).floor
+    @cell_width_px  = (width  - @padding_px * 2).to_f / @columns_count
+    @cell_height_px = (height - @padding_px * 2).to_f / @rows_count
+
+    # 各行
+    @screen_lines = Array.new(@rows_count) { "" }
+    @cursor_column_index = 0
+    @cursor_row_index = 0
+
+    @script_text = fixed_script
+    @script_char_index = 0
+    @is_finished = false
+
+    # タイプ速度（コマンドは遅く、出力は速く）
+    @command_typing_interval_frames = 5
+    @output_typing_interval_frames  = 1
+
+    # RGBパラメータ
+    # 各色をどれだけ（x,y）移動して描くか
+    @channel_offset_px = {
+      r: [ 8.0, -2.0], # red
+      g: [-2.0,  0.0], # green
+      b: [-8.0,  2.0]  # blue
+    }
+
+    # （横揺れはいったんやめた）
+    @channel_time_lag = { r: 0.0, g: -0.18, b: 0.22 }
+  end
+
+  def draw
+    background 8
+
+    step_terminal unless @is_finished
+    draw_terminal_frame
+
+    if glitching?
+      draw_terminal_rgb
+    else
+      draw_terminal_normal
+    end
+  end
+
+  # 実際に表示するコマンドと出力
+  def fixed_script
+    [
+      "$ cd /var/www/app\n",
+      "$ git pull\n",
+      "Already up to date.\n",
+      "$ bundle exec rake db:migrate\n",
+      "== 20250101010101 CreateJobs: migrating =====================\n",
+      "-- create_table(:jobs)\n",
+      "   -> 0.0421s\n",
+      "== 20250101010101 CreateJobs: migrated (0.0423s) ============\n",
+      "$ rails s\n",
+      "=> Booting Puma\n",
+      "=> Rails 7.1.0 application starting in development\n",
+      "=> Run `bin/rails server --help` for more startup options\n",
+      "Puma starting in single mode...\n",
+      "* Puma version: 6.4.2 (ruby 3.3.0-p0)\n",
+      "* Min threads: 5\n",
+      "* Max threads: 5\n",
+      "* Environment: development\n",
+      "* Listening on http://127.0.0.1:3000\n",
+      "* Listening on http://[::1]:3000\n"
+    ].join
+  end
+
+  # ターミナルに1文字ずつ出力
+  def step_terminal
+    current_line = @screen_lines[@cursor_row_index] || ""
+    interval_frames =
+      current_line.start_with?("$ ") ? @command_typing_interval_frames : @output_typing_interval_frames
+
+    return unless frame_count % interval_frames == 0
+    return (@is_finished = true) if @script_char_index >= @script_text.length
+
+    next_char = @script_text[@script_char_index, 1] # 1文字を確実にStringで取得
+    @script_char_index += 1
+
+    next_char == "\n" ? newline : put_char(next_char)
+  end
+
+  def put_char(char)
+    newline if @cursor_column_index >= @columns_count
+    @screen_lines[@cursor_row_index] << char
+    @cursor_column_index += 1
+  end
+
+  def newline
+    @cursor_column_index = 0
+    @cursor_row_index += 1
+    return if @cursor_row_index < @rows_count
+
+    @screen_lines.shift
+    @screen_lines << ""
+    @cursor_row_index = @rows_count - 1
+  end
+
+  # ターミナルっぽい枠
+  def draw_terminal_frame
+    no_stroke
+    fill(0, 120)
+    rect_mode(CORNER)
+    rect(@padding_px - 12, @padding_px - 12,
+         width - (@padding_px - 12) * 2,
+         height - (@padding_px - 12) * 2, 18)
+  end
+
+  # 現在行が "$ " で始まらないなら見た目を壊す
+  def glitching?
+    current_line = @screen_lines[@cursor_row_index] || ""
+    !current_line.start_with?("$ ")
+  end
+
+  # 通常描画
+  def draw_terminal_normal
+    no_stroke
+    fill(240, 210)
+    @rows_count.times do |row_index|
+      text(@screen_lines[row_index], @padding_px, @padding_px + row_index * @cell_height_px)
+    end
+  end
+
+  # RGB分離（各色を別位置に描き、alphaをランダムにしてちらつかせる）
+  def draw_terminal_rgb
+    glitch_strength = 1.0
+    base_time = frame_count * 0.02
+
+    draw_text_channel(:r, 255, 0,   0,   glitch_strength, base_time + @channel_time_lag[:r] * glitch_strength)
+    draw_text_channel(:g, 0,   255, 0,   glitch_strength, base_time + @channel_time_lag[:g] * glitch_strength)
+    draw_text_channel(:b, 0,   120, 255, glitch_strength, base_time + @channel_time_lag[:b] * glitch_strength)
+  end
+
+  def draw_text_channel(channel_key, red, green, blue, glitch_strength, _time)
+    push
+
+    # 色ごとの位置ずれ（色収差）
+    offset_x_px, offset_y_px = @channel_offset_px.fetch(channel_key, [0.0, 0.0])
+    translate(offset_x_px * glitch_strength, offset_y_px * glitch_strength)
+
+    no_stroke
+
+    # ちらつき
+    alpha = rand(50..150)
+    fill(red, green, blue, alpha)
+
+    @rows_count.times do |row_index|
+      text(@screen_lines[row_index], @padding_px, @padding_px + row_index * @cell_height_px)
+    end
+
+    pop
+  end
+</script>
+</body>
+</html>
