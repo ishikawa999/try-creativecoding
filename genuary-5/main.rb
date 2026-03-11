@@ -9,6 +9,7 @@ class LetterBoxContext
     @side = side
   end
 
+  # box内の位置を比率で指定して座標を計算する(毎回座標を書くのは面倒なので)
   def x(horizontal_ratio)
     @left_x + @side * horizontal_ratio
   end
@@ -30,6 +31,7 @@ end
 def draw
   # 背景色
   background(BG_R, BG_G, BG_B)
+  draw_motion_glow
 
   # 1文字を描く基準ボックス（正方形）
   letter_box_side = 100.0
@@ -45,15 +47,37 @@ def draw
 end
 
 def ink_blue
-  fill(70, 140, 255, 120)
-  stroke(80, 165, 255, 195)
+  pulse = (Math.sin(frameCount * 0.08) + 1.0) * 0.5
+  fill(70, 140, 255, (90 + pulse * 70).to_i)
+  stroke(80, 165, 255, (150 + pulse * 80).to_i)
   strokeWeight(2)
 end
 
 def ink_purple
-  fill(196, 90, 255, 120)
-  stroke(224, 120, 255, 195)
+  pulse = (Math.sin(frameCount * 0.08 + 1.3) + 1.0) * 0.5
+  fill(196, 90, 255, (90 + pulse * 70).to_i)
+  stroke(224, 120, 255, (150 + pulse * 80).to_i)
   strokeWeight(2)
+end
+
+def draw_motion_glow
+  noStroke
+  i = 0
+  while i < 5
+    phase = frameCount * 0.012 + i * 1.2
+    x = width * (0.15 + 0.18 * i) + Math.sin(phase) * 24.0
+    y = height * (0.28 + 0.08 * i) + Math.cos(phase * 1.3) * 20.0
+    size = 140 + Math.sin(phase * 1.7) * 35.0
+
+    if i.even?
+      fill(70, 140, 255, 26)
+    else
+      fill(196, 90, 255, 22)
+    end
+
+    circle(x, y, size)
+    i += 1
+  end
 end
 
 # 背景色と同じ色で上書きして消す
